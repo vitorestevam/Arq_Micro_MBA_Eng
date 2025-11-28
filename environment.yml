@@ -14,7 +14,7 @@ dependencies:
     # Utilities
     - faker>=20.0.0
     - requests>=2.31.0
+    - pydantic>=2.6.0
     # Database
     - psycopg2-binary>=2.9.9
-
 
