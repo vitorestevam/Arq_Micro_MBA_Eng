@@ -1,11 +1,15 @@
+from __future__ import annotations
+
+import argparse
+import random
+import time
+from datetime import datetime
+
 from confluent_kafka import Producer
 from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.avro import AvroSerializer
-from confluent_kafka.serialization import SerializationContext, MessageField
+from confluent_kafka.serialization import MessageField, SerializationContext
 from faker import Faker
-import time
-import random
-from datetime import datetime
 
 # Configuração Schema Registry
 schema_registry_conf = {'url': 'http://localhost:8082'}
@@ -37,16 +41,37 @@ def delivery_callback(err, msg):
     else:
         print(f'✅ Pedido enviado: {msg.value()[:50] if isinstance(msg.value(), bytes) else str(msg.value())[:50]}...')
 
-print(f"🚀 Iniciando gerador de pedidos AVRO para o tópico '{topic}'...")
-print("   Gerando 1 pedido a cada 2 segundos")
-print("   Usando Schema Registry + Avro")
-print("   Pressione Ctrl+C para parar\n")
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Gera pedidos Avro finitos para o tópico demo-orders.")
+    parser.add_argument(
+        "--events",
+        type=int,
+        default=20,
+        help="Quantidade de pedidos a serem enviados (default: 20).",
+    )
+    parser.add_argument(
+        "--interval",
+        type=float,
+        default=0.5,
+        help="Intervalo em segundos entre eventos (default: 0.5s).",
+    )
+    parser.add_argument(
+        "--start-order-id",
+        type=int,
+        default=1000,
+        help="Valor inicial do contador de IDs (default: 1000).",
+    )
+    return parser.parse_args()
 
-order_counter = 1000
 
-try:
-    while True:
-        # Gera pedido
+def main() -> None:
+    args = parse_args()
+    print(f"🚀 Iniciando gerador de pedidos Avro → tópico '{topic}'")
+    print(f"   Total planejado: {args.events} eventos | Intervalo: {args.interval}s\n")
+
+    order_counter = args.start_order_id
+
+    for _ in range(args.events):
         order_id = f"ORD-{order_counter}"
         order = {
             "order_id": order_id,
@@ -57,29 +82,29 @@ try:
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat()
         }
-        
-        # Serializa com Avro e envia para Kafka
+
         try:
+            print(f"→ Serializando {order_id}", flush=True)
             serialized_value = avro_serializer(
                 order,
                 SerializationContext(topic, MessageField.VALUE)
             )
-            
+            print(f"→ Publicando {order_id}", flush=True)
             producer.produce(
                 topic,
                 value=serialized_value,
                 callback=delivery_callback
             )
             producer.poll(0)
-            
+        except Exception as exc:
+            print(f"❌ Erro ao serializar/enviar: {exc}")
+        finally:
             order_counter += 1
-            time.sleep(2)
-        except Exception as e:
-            print(f"❌ Erro ao serializar/enviar: {e}")
-            time.sleep(1)
+            time.sleep(args.interval)
 
-except KeyboardInterrupt:
-    print("\n\n🛑 Parando gerador...")
-finally:
     producer.flush()
-    print("✅ Todas as mensagens foram enviadas!")
+    print("\n✅ Todos os pedidos foram enviados!")
+
+
+if __name__ == "__main__":
+    main()

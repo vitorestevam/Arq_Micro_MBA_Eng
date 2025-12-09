@@ -17,5 +17,8 @@ apresentacoes/
 __pycache__/
 *.pyc
 
+# Artefatos locais das demos
+aula_05/demo_00_cqrs_checkout/*.db
+
 # Logs das demos
 aula_03/**/*.log

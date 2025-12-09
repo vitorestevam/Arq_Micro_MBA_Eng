@@ -1,6 +1,6 @@
-# Demo 6: Kafka Connect JDBC Sink com UPSERT
+# Demo 6: Kafka Connect JDBC Sink com UPSERT (Dual Sink)
 
-Esta demo demonstra como usar o **Kafka Connect** para persistir automaticamente dados do Kafka em um banco de dados Postgres, usando o modo **UPSERT** (insert ou update).
+Esta demo demonstra como usar o **Kafka Connect** para persistir automaticamente dados do Kafka em **dois bancos** (Postgres e MySQL) usando o modo **UPSERT** (insert ou update).
 
 ## Conceito
 
@@ -11,14 +11,18 @@ Simula um sistema de e-commerce que gera pedidos continuamente. Os pedidos são 
     ↓ (JSON)
 [Tópico: demo-orders]
     ↓ (Connect consome)
-[JDBC Sink Connector - UPSERT]
-    ↓ (persiste)
+[JDBC Sink Connector - UPSERT (Postgres)]
+    ↓
 [Tabela Postgres: orders]
+
+[JDBC Sink Connector - UPSERT (MySQL)]
+    ↓
+[Tabela MySQL: orders]
 ```
 
 ## Pré-requisitos
 
-1. Ambiente Docker rodando (com Postgres e Kafka Connect):
+1. Ambiente Docker rodando (com Postgres, MySQL e Kafka Connect):
 ```bash
 cd ../../aula_01
 docker compose up -d
@@ -32,15 +36,7 @@ docker compose up -d
 
 ### 1. Configurar o Ambiente
 
-**IMPORTANTE:** Antes de executar o setup, certifique-se que o tópico está limpo (sem mensagens antigas em JSON):
-
-```bash
-# Se o tópico já existe com mensagens antigas, delete e recrie:
-docker exec kafka kafka-topics --delete --topic demo-orders --bootstrap-server kafka:29092
-docker exec kafka kafka-topics --create --topic demo-orders --bootstrap-server kafka:29092 --partitions 3 --replication-factor 3
-```
-
-Execute o script de setup que cria o tópico e registra o conector:
+Execute o script de setup que cria o tópico (RF=3) e registra **dois conectores**:
 
 ```bash
 bash setup.sh
@@ -49,24 +45,29 @@ bash setup.sh
 **O que ele faz:**
 - Cria o tópico `demo-orders` com 3 partições e RF=3
 - Aguarda o Kafka Connect estar pronto
-- Registra o JDBC Sink Connector com configuração de UPSERT e AvroConverter
-- Mostra o status do conector
+- Registra os conectores `jdbc-sink-orders-demo` (Postgres) e `jdbc-sink-orders-demo-mysql`
+- Mostra o status de ambos os conectores
 
 ### 2. Iniciar o Gerador de Pedidos
 
 Em um terminal separado, execute:
 
 ```bash
-python order_generator.py
+python order_generator.py --events 20 --interval 0.5
 ```
 
+**Parâmetros úteis:**
+- `--events`: quantidade finita de pedidos (default: 20)
+- `--interval`: intervalo entre pedidos em segundos (default: 0.5)
+- `--start-order-id`: número inicial para os IDs (default: 1000)
+
 **O que acontece:**
-- Gera 1 pedido a cada 2 segundos usando Faker
+- Gera pedidos sintéticos usando Faker
 - Cada pedido é **serializado com Avro** e registrado no Schema Registry
 - Cada pedido tem: ID, nome do cliente, produto, valor, status e timestamps
 - Os pedidos são enviados para o tópico `demo-orders` no formato Avro
 
-### 3. Verificar os Dados no Postgres
+### 3. Verificar os Dados (Postgres e MySQL)
 
 Em outro terminal, execute:
 
@@ -75,9 +76,9 @@ bash verify.sh
 ```
 
 **O que você verá:**
-- Os 10 pedidos mais recentes
-- Total de pedidos na tabela
-- Distribuição de pedidos por status
+- Os 10 pedidos mais recentes no Postgres
+- Os 10 pedidos mais recentes no MySQL
+- Totais e distribuição por status nos dois bancos
 
 ## Testando o UPSERT
 
@@ -90,17 +91,18 @@ O modo UPSERT significa que se você enviar um pedido com um `order_id` que já 
 4. Execute novamente
 5. Rode `bash verify.sh` e veja que o contador não aumenta, mas o registro é atualizado
 
-## Configuração do Conector
+## Configuração dos Conectores
 
-O arquivo `connector-config.json` define:
+- `connector-config.json`: Postgres (`jdbc-sink-orders-demo`)
+- `connector-config-mysql.json`: MySQL (`jdbc-sink-orders-demo-mysql`)
 
-- **insert.mode: "upsert"** - Faz UPDATE se a chave primária já existir
-- **pk.mode: "record_value"** - Usa o valor do campo como chave primária
-- **pk.fields: "order_id"** - Define qual campo é a chave primária
-- **auto.create: true** - Cria a tabela automaticamente se não existir
-- **auto.evolve: true** - Adiciona colunas automaticamente se o schema mudar
-- **value.converter: "io.confluent.connect.avro.AvroConverter"** - Usa Avro para deserialização
-- **value.converter.schema.registry.url** - URL do Schema Registry (dentro da rede Docker)
+Ambos usam os mesmos princípios:
+
+- **insert.mode: "upsert"**
+- **pk.mode: "record_value"**
+- **pk.fields: "order_id"**
+- **auto.create/auto.evolve: true**
+- **value.converter: AvroConverter** apontando para o Schema Registry
 
 ## Limpeza
 
@@ -109,8 +111,9 @@ Para parar tudo:
 ```bash
 # Parar o producer (Ctrl+C no terminal dele)
 
-# Remover o conector
+# Remover os conectores
 curl -X DELETE http://localhost:8083/connectors/jdbc-sink-orders-demo
+curl -X DELETE http://localhost:8083/connectors/jdbc-sink-orders-demo-mysql
 
 # Parar os containers
 cd ../../aula_01
@@ -129,4 +132,3 @@ docker compose down
 
 **Producer não conecta**
 - Certifique-se que o Kafka está rodando: `docker ps | grep kafka`
-
