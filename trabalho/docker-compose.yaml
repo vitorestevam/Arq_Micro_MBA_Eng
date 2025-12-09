@@ -1,0 +1,131 @@
+version: '3.8'
+services:
+  postgres_src:
+    image: debezium/example-postgres:1.9
+    container_name: postgres_src
+    ports:
+      - "5433:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  postgres_dest:
+    image: postgres:15
+    container_name: postgres_dest
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: analytics
+    ports:
+      - "5444:5432"
+
+  zookeeper:
+    image: wurstmeister/zookeeper:latest
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: wurstmeister/kafka:latest
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: INTERNAL://:29092,EXTERNAL://:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      
+  kafdrop:
+    image: obsidiandynamics/kafdrop:latest
+    container_name: kafdrop
+    ports:
+      - "9002:9000"
+    environment:
+      KAFKA_BROKERCONNECT: "kafka:29092"  # internal listener of your Kafka container
+      JVM_OPTS: "-Xms32M -Xmx64M"
+    depends_on:
+      - kafka
+
+  kconnect:
+    image: debezium/connect:2.6
+    container_name: kconnect
+    ports:
+      - "8083:8083"
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      CONFIG_STORAGE_TOPIC: my_connect_configs
+      OFFSET_STORAGE_TOPIC: my_connect_offsets
+      STATUS_STORAGE_TOPIC: my_connect_statuses
+      GROUP_ID: connect-cluster
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      PLUGIN_PATH: /kafka/connect
+    volumes:
+      - ./connectors:/connectors
+    depends_on:
+      - kafka
+      - zookeeper
+      - postgres_src
+
+  connector-init:
+    image: curlimages/curl:8.6.0
+    depends_on:
+      - kconnect
+    volumes:
+      - ./connectors:/connectors
+    entrypoint: |
+      sh -c '
+      echo "Waiting for Kafka Connect REST API to be ready...";
+      until curl -s -o /dev/null -w "%{http_code}" http://kconnect:8083/connectors | grep 200 > /dev/null; do
+        sleep 2;
+      done;
+
+      echo "Registering source connector...";
+      curl -X POST -H "Content-Type: application/json" --data @/connectors/postgres_src.json http://kconnect:8083/connectors;
+      echo "Source connector registered.";
+      '
+
+  postgres_consumer:
+    image: python:3.11
+    depends_on:
+      - kafka
+      - postgres_dest
+      - connector-init
+    volumes:
+      - ./src/postgres_consumer.py:/consumer.py
+      - ./src/requirements.txt:/requirements.txt
+    command: >
+      sh -c "pip install -r /requirements.txt && python /consumer.py"
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
+  minio_consumer:
+    image: python:3.11
+    depends_on:
+      - kafka
+      - minio
+    volumes:
+      - ./src/minio_consumer.py:/minio_consumer.py
+      - ./src/requirements.txt:/requirements.txt
+    command: >
+      sh -c "pip install -r /requirements.txt && python /minio_consumer.py"
+
+volumes:
+  minio-data:

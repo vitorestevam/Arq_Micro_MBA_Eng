@@ -2,7 +2,6 @@
 apresentacoes/
 
 # Trabalho: ignore tudo exceto TRABALHO.md e image.png
-/trabalho/*
 !/trabalho/TRABALHO.md
 !/trabalho/image.png
 

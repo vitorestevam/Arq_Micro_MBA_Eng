@@ -1,0 +1,22 @@
+{
+  "name": "pg-src",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "postgres_src",
+    "database.port": "5432",
+    "database.user": "postgres",
+    "database.password": "postgres",
+    "database.dbname": "postgres",
+    "database.server.name": "dbserver1",
+    "table.include.list": "public.meme_coins",
+    "slot.name": "debezium",
+    "slot.drop.on.stop": "true",
+    "plugin.name": "pgoutput",
+    "publication.name": "dbz_publication",
+    "publication.autocreate.mode": "filtered",
+    "topic.prefix": "dbserver1",
+    "include.schema.changes": "false",
+    "tombstones.on.delete": "false",
+    "message.key.columns": "public.meme_coins:id"
+  }
+}
